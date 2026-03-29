@@ -96,7 +96,7 @@
       padding: 24px 24px 40px;
       font-family: "Courier New", Courier, monospace;
       font-size: 12pt;
-      line-height: 1.5;
+      line-height: 1.25;
       tab-size: 4;
       white-space: pre-wrap;
       overflow: auto;
@@ -322,7 +322,7 @@
         padding: 0.5in 0.9in;
         font-family: "Courier New", Courier, monospace;
         font-size: 12pt;
-        line-height: 1.5;
+        line-height: 1.25;
         white-space: pre-wrap;
       }
     }
@@ -442,10 +442,10 @@
       const INDENT = {
         action: '',
         intext: '',
-        character: '                ',
-        dialogue: '                    ',
-        beat: '                    ',
-        cut: '                                                '
+        character: '                          ',
+        dialogue: '               ',
+        beat: '                   ',
+        cut: '                                             '
       };
 
       const SAMPLE = {
@@ -572,7 +572,7 @@
 <meta charset="UTF-8">
 <title>${escapeHtml(titleInput.value || 'Untitled Screenplay')}</title>
 <style>
-body { font-family: "Courier New", Courier, monospace; font-size: 12pt; line-height: 1.5; margin: 1in; }
+body { font-family: "Courier New", Courier, monospace; font-size: 12pt; line-height: 1.25; margin: 1in; }
 pre { white-space: pre-wrap; margin: 0; }
 </style>
 </head>
@@ -607,9 +607,10 @@ pre { white-space: pre-wrap; margin: 0; }
         if (!trimmed) return 'empty';
         if (/^(INT\.|EXT\.|INT\/EXT\.|I\/E\.)/i.test(trimmed)) return 'intext';
         if (/^CUT TO:$/i.test(trimmed)) return 'cut';
-        if (/^\(beat\)$/i.test(trimmed)) return 'beat';
-        if (/^\s{20,}/.test(line)) return 'dialogue';
-        if (/^\s{16,}/.test(line)) return 'character';
+        if (/^\([^)]*\)$/i.test(trimmed)) return 'beat';
+        const leading = (line.match(/^ */) || [''])[0].length;
+        if (leading >= INDENT.character.length - 2 && /^[A-Z0-9 .()'\/-]+$/.test(trimmed) && trimmed === trimmed.toUpperCase()) return 'character';
+        if (leading >= INDENT.dialogue.length - 2) return 'dialogue';
         return 'action';
       }
 
@@ -617,6 +618,67 @@ pre { white-space: pre-wrap; margin: 0; }
         const cleaned = text.replace(/^\s+/, '').replace(/\s+$/, '');
         const sample = SAMPLE[format];
         return INDENT[format] + (cleaned || sample);
+      }
+
+      function getEditorMetrics() {
+        const styles = getComputedStyle(editor);
+        const leftPad = parseFloat(styles.paddingLeft) || 0;
+        const rightPad = parseFloat(styles.paddingRight) || 0;
+        const available = Math.max(120, editor.clientWidth - leftPad - rightPad);
+        const probe = document.createElement('span');
+        probe.textContent = '0';
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        probe.style.whiteSpace = 'pre';
+        probe.style.font = styles.font;
+        document.body.appendChild(probe);
+        const charWidth = probe.getBoundingClientRect().width || 7.2;
+        probe.remove();
+        return { maxChars: Math.max(24, Math.floor(available / charWidth)) };
+      }
+
+      function wrapIndentedParagraph(text, indentSize, maxChars) {
+        const prefix = ' '.repeat(indentSize);
+        const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+        if (!words.length) return prefix;
+        const lines = [];
+        let current = prefix;
+        words.forEach(word => {
+          const spacer = current.trim() ? ' ' : '';
+          if ((current + spacer + word).length > maxChars && current.trim()) {
+            lines.push(current);
+            current = prefix + word;
+          } else {
+            current += spacer + word;
+          }
+        });
+        lines.push(current);
+        return lines.join('\n');
+      }
+
+      function insertCharacterDialogueBlock() {
+        restoreSelection();
+        const value = editor.value;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const selected = value.slice(start, end).trim();
+        let characterText = SAMPLE.character;
+        let dialogueText = SAMPLE.dialogue;
+        if (selected) {
+          const lines = selected.split('\n').map(line => line.trim()).filter(Boolean);
+          if (lines[0]) characterText = lines[0].toUpperCase();
+          if (lines.slice(1).length) dialogueText = lines.slice(1).join(' ');
+        }
+        const { maxChars } = getEditorMetrics();
+        const wrappedDialogue = wrapIndentedParagraph(dialogueText, INDENT.dialogue.length, maxChars);
+        const block = INDENT.character + characterText + '\n' + wrappedDialogue + '\n';
+        editor.value = value.slice(0, start) + block + value.slice(end);
+        const caret = start + block.length;
+        editor.setSelectionRange(caret, caret);
+        captureSelection();
+        scheduleAutosave();
+        focusEditor();
+        closePalette();
       }
 
       function getExpandedLineSelection(value, start, end) {
@@ -627,16 +689,29 @@ pre { white-space: pre-wrap; margin: 0; }
       }
 
       function applyFormat(format) {
+        if (format === 'characterdialogue') {
+          insertCharacterDialogueBlock();
+          return;
+        }
+
         restoreSelection();
         const value = editor.value;
-        let start = editor.selectionStart;
-        let end = editor.selectionEnd;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
 
         if (start !== end) {
           const { lineStart, lineEnd } = getExpandedLineSelection(value, start, end);
           const selected = value.slice(lineStart, lineEnd);
-          const lines = selected.split('\n').map(line => normalizeLine(format, line));
-          const replacement = lines.join('\n');
+          let replacement;
+          if (format === 'dialogue') {
+            const { maxChars } = getEditorMetrics();
+            replacement = selected
+              .split('\n')
+              .map(line => wrapIndentedParagraph(line.replace(/^\s+|\s+$/g, ''), INDENT.dialogue.length, maxChars))
+              .join('\n');
+          } else {
+            replacement = selected.split('\n').map(line => normalizeLine(format, line)).join('\n');
+          }
           editor.value = value.slice(0, lineStart) + replacement + value.slice(lineEnd);
           const selEnd = lineStart + replacement.length;
           editor.setSelectionRange(lineStart, selEnd);
@@ -647,8 +722,10 @@ pre { white-space: pre-wrap; margin: 0; }
           return;
         }
 
-        const insert = normalizeLine(format, '');
-        const block = insert + '\n\n';
+        const insert = format === 'dialogue'
+          ? wrapIndentedParagraph(SAMPLE.dialogue, INDENT.dialogue.length, getEditorMetrics().maxChars)
+          : normalizeLine(format, '');
+        const block = insert + '\n';
         editor.value = value.slice(0, start) + block + value.slice(end);
         const caret = start + block.length;
         editor.setSelectionRange(caret, caret);
@@ -722,26 +799,29 @@ pre { white-space: pre-wrap; margin: 0; }
       }
 
       function handleEnterKey(event) {
-        const { line } = getCurrentLineInfo();
+        const info = getCurrentLineInfo();
+        const { line, start } = info;
         const type = classifyLine(line);
         if (type === 'character') {
           event.preventDefault();
           insertTextAtCursor('\n' + INDENT.dialogue);
           return;
         }
-        if (type === 'dialogue' || type === 'beat') {
-          const beforeCaret = line.slice(0, editor.selectionStart - getCurrentLineInfo().start);
+        if (type === 'beat') {
           event.preventDefault();
-          if (beforeCaret.trim() === '') {
-            insertTextAtCursor('\n');
-          } else {
-            insertTextAtCursor('\n' + INDENT.dialogue);
-          }
+          insertTextAtCursor('\n' + INDENT.dialogue);
+          return;
+        }
+        if (type === 'dialogue') {
+          const beforeCaret = line.slice(0, editor.selectionStart - start);
+          event.preventDefault();
+          if (beforeCaret.trim() === '') insertTextAtCursor('\n');
+          else insertTextAtCursor('\n' + INDENT.dialogue);
           return;
         }
         if (type === 'intext' || type === 'cut') {
           event.preventDefault();
-          insertTextAtCursor('\n\n');
+          insertTextAtCursor('\n');
         }
       }
 
