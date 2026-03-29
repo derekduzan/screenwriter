@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Minimal Screenplay Editor</title>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --panel: #ffffff;
+      --line: #dddddf;
+      --text: #111111;
+      --muted: #666;
+      --accent: #111111;
+      --danger: #8b1e1e;
+      --topbar-h: 56px;
+      --formatbar-h: 50px;
+      --radius: 14px;
+      --shadow: 0 8px 24px rgba(0,0,0,0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overscroll-behavior: none;
+    }
+
+    .app {
+      height: 100dvh;
+      display: grid;
+      grid-template-rows: var(--topbar-h) var(--formatbar-h) 1fr;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px calc(10px + env(safe-area-inset-top, 0px)) 12px;
+      background: rgba(255,255,255,0.92);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(10px);
+    }
+
+    .formatbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      overflow-x: auto;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.92);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: var(--topbar-h);
+      z-index: 19;
+      backdrop-filter: blur(10px);
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .formatbar::-webkit-scrollbar { display: none; }
+
+    .editor-wrap {
+      min-height: 0;
+      padding: 12px;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .page {
+      width: min(100%, 860px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    textarea.editor {
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      resize: none;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      padding: 24px 24px 40px;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 12pt;
+      line-height: 1.5;
+      tab-size: 4;
+      white-space: pre-wrap;
+      overflow: auto;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    .btn, .chip, .menu-btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 12px;
+      min-height: 40px;
+      padding: 0 12px;
+      font: inherit;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn:active, .chip:active, .menu-btn:active { transform: translateY(1px); }
+    .btn.primary, .chip.primary { background: var(--accent); color: white; border-color: var(--accent); }
+    .btn.danger { color: var(--danger); }
+
+    .icon-btn {
+      width: 40px;
+      min-width: 40px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .title {
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      min-width: 0;
+    }
+
+    .chip {
+      white-space: nowrap;
+      flex: 0 0 auto;
+      font-size: 14px;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 4px;
+      white-space: nowrap;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.22);
+      z-index: 40;
+      display: none;
+    }
+    .overlay.show { display: block; }
+
+    .sheet {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100dvh;
+      width: min(340px, 92vw);
+      background: #fff;
+      border-right: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      z-index: 50;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+    .sheet.show { transform: translateX(0); }
+
+    .sheet header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .sheet .section {
+      padding: 14px;
+      border-bottom: 1px solid #f0f0f2;
+    }
+
+    .sheet h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+
+    .palette {
+      position: fixed;
+      inset: auto 12px 12px 12px;
+      max-width: 520px;
+      margin: auto;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      z-index: 60;
+      display: none;
+      padding: 10px;
+    }
+    .palette.show { display: block; }
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .palette .menu-btn {
+      min-height: 52px;
+      text-align: left;
+      padding: 10px 12px;
+    }
+    .palette .small {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .exit-fullscreen {
+      display: none;
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 35;
+      box-shadow: var(--shadow);
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+
+    .print-only { display: none; }
+
+    body.fullscreen-mode .app {
+      grid-template-rows: var(--topbar-h) var(--formatbar-h) 1fr;
+    }
+
+    body.fullscreen-mode .topbar,
+    body.fullscreen-mode .formatbar {
+      background: rgba(255,255,255,0.96);
+    }
+
+    body.fullscreen-mode .editor-wrap {
+      padding: 0;
+    }
+
+    body.fullscreen-mode .page {
+      width: 100%;
+      max-width: none;
+      border-radius: 0;
+      border-left: 0;
+      border-right: 0;
+      border-bottom: 0;
+    }
+
+    body.fullscreen-mode .exit-fullscreen {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    @media (max-width: 700px) {
+      .topbar {
+        grid-template-columns: auto 1fr auto;
+      }
+      .desktop-only { display: none; }
+      textarea.editor {
+        padding: 18px 16px 40px;
+        font-size: 12pt;
+      }
+      .page {
+        border-radius: 14px;
+      }
+      .palette-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      body { background: white; }
+      .topbar, .formatbar, .editor-wrap, .overlay, .sheet, .palette, .exit-fullscreen { display: none !important; }
+      .print-only {
+        display: block;
+        padding: 0.5in 0.9in;
+        font-family: "Courier New", Courier, monospace;
+        font-size: 12pt;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <button id="menuButton" class="btn icon-btn" aria-label="Open menu">☰</button>
+      <input id="titleInput" class="title" type="text" value="Untitled Screenplay" aria-label="Document title" />
+      <button id="paletteButton" class="btn icon-btn desktop-only" aria-label="Open format palette" title="Format palette (Ctrl/Cmd + /)">⌘</button>
+      <button id="fullscreenButton" class="btn icon-btn" aria-label="Enter fullscreen" title="Toggle fullscreen">⛶</button>
+    </div>
+
+    <div class="formatbar" id="formatBar" aria-label="Screenplay formatting presets">
+      <button class="chip primary format-btn" data-format="action">Action</button>
+      <button class="chip format-btn" data-format="intext">INT/EXT</button>
+      <button class="chip format-btn" data-format="character">Character</button>
+      <button class="chip format-btn" data-format="dialogue">Dialogue</button>
+      <button class="chip format-btn" data-format="beat">(Beat)</button>
+      <button class="chip format-btn" data-format="cut">CUT TO:</button>
+      <span class="meta desktop-only">Alt/Option + 1–6</span>
+    </div>
+
+    <div class="editor-wrap">
+      <div class="page">
+        <label class="sr-only" for="editor">Screenplay editor</label>
+        <textarea id="editor" class="editor" spellcheck="true" autocapitalize="sentences" autocomplete="off" autocorrect="on" placeholder="Write here..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <button id="exitFullscreenButton" class="btn exit-fullscreen">Exit fullscreen</button>
+
+  <div id="overlay" class="overlay" aria-hidden="true"></div>
+
+  <aside id="menuSheet" class="sheet" aria-hidden="true">
+    <header>
+      <strong>Menu</strong>
+      <button id="closeMenuButton" class="btn icon-btn" aria-label="Close menu">✕</button>
+    </header>
+
+    <div class="section">
+      <h3>Browser storage</h3>
+      <div class="stack">
+        <button id="saveBrowserButton" class="menu-btn">Save to browser</button>
+        <button id="loadBrowserButton" class="menu-btn">Load saved copy</button>
+        <button id="clearAutosaveButton" class="menu-btn danger">Clear autosave</button>
+      </div>
+      <div class="hint">Autosave runs continuously. “Save to browser” creates a manual saved copy you can load later.</div>
+    </div>
+
+    <div class="section">
+      <h3>Export & print</h3>
+      <div class="stack">
+        <button id="exportDocButton" class="menu-btn">Export .doc</button>
+        <button id="exportTxtButton" class="menu-btn">Export .txt</button>
+        <button id="printButton" class="menu-btn">Print / Save PDF</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Text style (rare use)</h3>
+      <div class="row">
+        <button class="menu-btn style-btn" data-style="bold">Bold</button>
+        <button class="menu-btn style-btn" data-style="italic">Italic</button>
+        <button class="menu-btn style-btn" data-style="underline">Underline</button>
+        <button class="menu-btn style-btn" data-style="clear">Clear styles</button>
+      </div>
+      <div class="hint">These wrap selected text using simple markers so the editor stays stable as plain text.</div>
+    </div>
+
+    <div class="section">
+      <h3>Shortcuts</h3>
+      <div class="hint">
+        Ctrl/Cmd + / = format palette<br />
+        Alt/Option + 1 = Action<br />
+        Alt/Option + 2 = INT/EXT<br />
+        Alt/Option + 3 = Character<br />
+        Alt/Option + 4 = Dialogue<br />
+        Alt/Option + 5 = (Beat)<br />
+        Alt/Option + 6 = CUT TO:<br />
+        Tab / Shift+Tab = indent / outdent selected lines
+      </div>
+    </div>
+  </aside>
+
+  <div id="palette" class="palette" aria-hidden="true">
+    <div class="palette-grid">
+      <button class="menu-btn format-btn" data-format="action">Action <span class="small">Alt/Option + 1</span></button>
+      <button class="menu-btn format-btn" data-format="intext">INT/EXT <span class="small">Alt/Option + 2</span></button>
+      <button class="menu-btn format-btn" data-format="character">Character <span class="small">Alt/Option + 3</span></button>
+      <button class="menu-btn format-btn" data-format="dialogue">Dialogue <span class="small">Alt/Option + 4</span></button>
+      <button class="menu-btn format-btn" data-format="beat">(Beat) <span class="small">Alt/Option + 5</span></button>
+      <button class="menu-btn format-btn" data-format="cut">CUT TO: <span class="small">Alt/Option + 6</span></button>
+    </div>
+  </div>
+
+  <pre id="printMirror" class="print-only"></pre>
+
+  <script>
+    (() => {
+      const editor = document.getElementById('editor');
+      const titleInput = document.getElementById('titleInput');
+      const overlay = document.getElementById('overlay');
+      const menuSheet = document.getElementById('menuSheet');
+      const palette = document.getElementById('palette');
+      const fullscreenButton = document.getElementById('fullscreenButton');
+      const exitFullscreenButton = document.getElementById('exitFullscreenButton');
+      const printMirror = document.getElementById('printMirror');
+
+      const STORAGE_KEYS = {
+        autosave: 'screenplay-editor-autosave-v1',
+        saved: 'screenplay-editor-manualsave-v1'
+      };
+
+      const INDENT = {
+        action: '',
+        intext: '',
+        character: '                ',
+        dialogue: '                    ',
+        beat: '                    ',
+        cut: '                                                '
+      };
+
+      const SAMPLE = {
+        action: 'Action line.',
+        intext: 'INT. LOCATION - DAY',
+        character: 'CHARACTER NAME',
+        dialogue: 'Dialogue goes here.',
+        beat: '(beat)',
+        cut: 'CUT TO:'
+      };
+
+      let lastSelection = { start: 0, end: 0 };
+      let autosaveTimer = null;
+
+      function getState() {
+        return {
+          title: titleInput.value || 'Untitled Screenplay',
+          content: editor.value,
+          savedAt: new Date().toISOString()
+        };
+      }
+
+      function setState(state) {
+        titleInput.value = state.title || 'Untitled Screenplay';
+        editor.value = state.content || '';
+        scheduleAutosave();
+      }
+
+      function saveAutosave() {
+        localStorage.setItem(STORAGE_KEYS.autosave, JSON.stringify(getState()));
+        flashStatus('Autosaved');
+      }
+
+      function saveManual() {
+        localStorage.setItem(STORAGE_KEYS.saved, JSON.stringify(getState()));
+        flashStatus('Saved to browser');
+      }
+
+      function loadManual() {
+        const raw = localStorage.getItem(STORAGE_KEYS.saved);
+        if (!raw) {
+          alert('No manual saved copy found in browser storage.');
+          return;
+        }
+        setState(JSON.parse(raw));
+        flashStatus('Loaded saved copy');
+        focusEditor();
+      }
+
+      function loadAutosave() {
+        const raw = localStorage.getItem(STORAGE_KEYS.autosave);
+        if (!raw) return false;
+        try {
+          setState(JSON.parse(raw));
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      function clearAutosave() {
+        const ok = confirm('Clear autosave from this browser?');
+        if (!ok) return;
+        localStorage.removeItem(STORAGE_KEYS.autosave);
+        flashStatus('Autosave cleared');
+      }
+
+      function scheduleAutosave() {
+        clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(saveAutosave, 450);
+      }
+
+      function focusEditor() {
+        editor.focus({ preventScroll: true });
+      }
+
+      function captureSelection() {
+        lastSelection = {
+          start: editor.selectionStart,
+          end: editor.selectionEnd
+        };
+      }
+
+      function restoreSelection() {
+        focusEditor();
+        editor.setSelectionRange(lastSelection.start, lastSelection.end);
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function downloadBlob(filename, content, type) {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function safeFileBaseName() {
+        return (titleInput.value || 'Untitled Screenplay')
+          .replace(/[\\/:*?"<>|]+/g, '')
+          .trim() || 'Untitled Screenplay';
+      }
+
+      function exportTxt() {
+        downloadBlob(`${safeFileBaseName()}.txt`, editor.value, 'text/plain;charset=utf-8');
+      }
+
+      function exportDoc() {
+        const bodyText = escapeHtml(editor.value).replace(/\n/g, '\r\n');
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(titleInput.value || 'Untitled Screenplay')}</title>
+<style>
+body { font-family: "Courier New", Courier, monospace; font-size: 12pt; line-height: 1.5; margin: 1in; }
+pre { white-space: pre-wrap; margin: 0; }
+</style>
+</head>
+<body>
+<pre>${bodyText}</pre>
+</body>
+</html>`;
+        downloadBlob(`${safeFileBaseName()}.doc`, html, 'application/msword;charset=utf-8');
+      }
+
+      function preparePrint() {
+        printMirror.textContent = editor.value;
+      }
+
+      function getLineBounds(text, index) {
+        const start = text.lastIndexOf('\n', Math.max(0, index - 1)) + 1;
+        let end = text.indexOf('\n', index);
+        if (end === -1) end = text.length;
+        return { start, end };
+      }
+
+      function getCurrentLineInfo() {
+        const pos = editor.selectionStart;
+        const text = editor.value;
+        const bounds = getLineBounds(text, pos);
+        const line = text.slice(bounds.start, bounds.end);
+        return { ...bounds, line };
+      }
+
+      function classifyLine(line) {
+        const trimmed = line.trim();
+        if (!trimmed) return 'empty';
+        if (/^(INT\.|EXT\.|INT\/EXT\.|I\/E\.)/i.test(trimmed)) return 'intext';
+        if (/^CUT TO:$/i.test(trimmed)) return 'cut';
+        if (/^\(beat\)$/i.test(trimmed)) return 'beat';
+        if (/^\s{20,}/.test(line)) return 'dialogue';
+        if (/^\s{16,}/.test(line)) return 'character';
+        return 'action';
+      }
+
+      function normalizeLine(format, text) {
+        const cleaned = text.replace(/^\s+/, '').replace(/\s+$/, '');
+        const sample = SAMPLE[format];
+        return INDENT[format] + (cleaned || sample);
+      }
+
+      function getExpandedLineSelection(value, start, end) {
+        const lineStart = value.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+        let lineEnd = value.indexOf('\n', end);
+        if (lineEnd === -1) lineEnd = value.length;
+        return { lineStart, lineEnd };
+      }
+
+      function applyFormat(format) {
+        restoreSelection();
+        const value = editor.value;
+        let start = editor.selectionStart;
+        let end = editor.selectionEnd;
+
+        if (start !== end) {
+          const { lineStart, lineEnd } = getExpandedLineSelection(value, start, end);
+          const selected = value.slice(lineStart, lineEnd);
+          const lines = selected.split('\n').map(line => normalizeLine(format, line));
+          const replacement = lines.join('\n');
+          editor.value = value.slice(0, lineStart) + replacement + value.slice(lineEnd);
+          const selEnd = lineStart + replacement.length;
+          editor.setSelectionRange(lineStart, selEnd);
+          captureSelection();
+          scheduleAutosave();
+          focusEditor();
+          closePalette();
+          return;
+        }
+
+        const insert = normalizeLine(format, '');
+        const block = insert + '\n\n';
+        editor.value = value.slice(0, start) + block + value.slice(end);
+        const caret = start + block.length;
+        editor.setSelectionRange(caret, caret);
+        captureSelection();
+        scheduleAutosave();
+        focusEditor();
+        closePalette();
+      }
+
+      function wrapSelectedText(prefix, suffix = prefix) {
+        restoreSelection();
+        const value = editor.value;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const selected = value.slice(start, end);
+        if (!selected) return;
+        const replacement = prefix + selected + suffix;
+        editor.value = value.slice(0, start) + replacement + value.slice(end);
+        editor.setSelectionRange(start, start + replacement.length);
+        captureSelection();
+        scheduleAutosave();
+        focusEditor();
+      }
+
+      function clearSimpleStyles() {
+        restoreSelection();
+        const value = editor.value;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const selected = value.slice(start, end);
+        if (!selected) return;
+        const replacement = selected.replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1').replace(/~(.*?)~/g, '$1');
+        editor.value = value.slice(0, start) + replacement + value.slice(end);
+        editor.setSelectionRange(start, start + replacement.length);
+        captureSelection();
+        scheduleAutosave();
+        focusEditor();
+      }
+
+      function indentSelection(outdent = false) {
+        const value = editor.value;
+        let start = editor.selectionStart;
+        let end = editor.selectionEnd;
+        const { lineStart, lineEnd } = getExpandedLineSelection(value, start, end);
+        const lines = value.slice(lineStart, lineEnd).split('\n');
+        const updated = lines.map(line => {
+          if (!outdent) return '    ' + line;
+          if (line.startsWith('    ')) return line.slice(4);
+          if (line.startsWith('\t')) return line.slice(1);
+          return line.replace(/^ {1,4}/, '');
+        }).join('\n');
+
+        editor.value = value.slice(0, lineStart) + updated + value.slice(lineEnd);
+        const newStart = lineStart;
+        const newEnd = lineStart + updated.length;
+        editor.setSelectionRange(newStart, newEnd);
+        captureSelection();
+        scheduleAutosave();
+      }
+
+      function insertTextAtCursor(text, keepSelection = false) {
+        const value = editor.value;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = value.slice(0, start) + text + value.slice(end);
+        const pos = start + text.length;
+        if (keepSelection) editor.setSelectionRange(start, pos);
+        else editor.setSelectionRange(pos, pos);
+        captureSelection();
+        scheduleAutosave();
+      }
+
+      function handleEnterKey(event) {
+        const { line } = getCurrentLineInfo();
+        const type = classifyLine(line);
+        if (type === 'character') {
+          event.preventDefault();
+          insertTextAtCursor('\n' + INDENT.dialogue);
+          return;
+        }
+        if (type === 'dialogue' || type === 'beat') {
+          const beforeCaret = line.slice(0, editor.selectionStart - getCurrentLineInfo().start);
+          event.preventDefault();
+          if (beforeCaret.trim() === '') {
+            insertTextAtCursor('\n');
+          } else {
+            insertTextAtCursor('\n' + INDENT.dialogue);
+          }
+          return;
+        }
+        if (type === 'intext' || type === 'cut') {
+          event.preventDefault();
+          insertTextAtCursor('\n\n');
+        }
+      }
+
+      function openMenu() {
+        overlay.classList.add('show');
+        menuSheet.classList.add('show');
+        menuSheet.setAttribute('aria-hidden', 'false');
+      }
+
+      function closeMenu() {
+        overlay.classList.remove('show');
+        menuSheet.classList.remove('show');
+        menuSheet.setAttribute('aria-hidden', 'true');
+      }
+
+      function openPalette() {
+        overlay.classList.add('show');
+        palette.classList.add('show');
+        palette.setAttribute('aria-hidden', 'false');
+      }
+
+      function closePalette() {
+        palette.classList.remove('show');
+        palette.setAttribute('aria-hidden', 'true');
+        if (!menuSheet.classList.contains('show')) overlay.classList.remove('show');
+      }
+
+      async function toggleFullscreen() {
+        try {
+          if (!document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+          } else {
+            await document.exitFullscreen();
+          }
+        } catch {
+          document.body.classList.toggle('fullscreen-mode');
+        }
+        updateFullscreenUi();
+      }
+
+      function updateFullscreenUi() {
+        const active = !!document.fullscreenElement || document.body.classList.contains('fullscreen-mode');
+        document.body.classList.toggle('fullscreen-mode', active);
+        fullscreenButton.textContent = active ? '⤢' : '⛶';
+        fullscreenButton.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+      }
+
+      let statusTimer = null;
+      function flashStatus(text) {
+        const old = document.title;
+        document.title = `${text} • ${titleInput.value || 'Untitled Screenplay'}`;
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => { document.title = old; }, 900);
+      }
+
+      // Event bindings
+      ['keyup', 'mouseup', 'input', 'select', 'touchend'].forEach(type => {
+        editor.addEventListener(type, () => {
+          captureSelection();
+          if (type === 'input') scheduleAutosave();
+        });
+      });
+
+      titleInput.addEventListener('input', scheduleAutosave);
+
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        btn.addEventListener('pointerdown', e => e.preventDefault());
+        btn.addEventListener('click', () => applyFormat(btn.dataset.format));
+      });
+
+      document.querySelectorAll('.style-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const style = btn.dataset.style;
+          if (style === 'bold') wrapSelectedText('**');
+          if (style === 'italic') wrapSelectedText('_');
+          if (style === 'underline') wrapSelectedText('~');
+          if (style === 'clear') clearSimpleStyles();
+          closeMenu();
+        });
+      });
+
+      editor.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key === '/') {
+          event.preventDefault();
+          openPalette();
+          return;
+        }
+
+        if (event.altKey) {
+          const map = {
+            '1': 'action',
+            '2': 'intext',
+            '3': 'character',
+            '4': 'dialogue',
+            '5': 'beat',
+            '6': 'cut'
+          };
+          const format = map[event.key];
+          if (format) {
+            event.preventDefault();
+            applyFormat(format);
+            return;
+          }
+        }
+
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          indentSelection(event.shiftKey);
+          return;
+        }
+
+        if (event.key === 'Enter' && !event.shiftKey) {
+          handleEnterKey(event);
+        }
+      });
+
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          if (palette.classList.contains('show')) closePalette();
+          if (menuSheet.classList.contains('show')) closeMenu();
+          if (document.fullscreenElement) document.exitFullscreen();
+          else if (document.body.classList.contains('fullscreen-mode')) {
+            document.body.classList.remove('fullscreen-mode');
+            updateFullscreenUi();
+          }
+        }
+
+        if ((event.ctrlKey || event.metaKey) && event.key === '/') {
+          event.preventDefault();
+          openPalette();
+        }
+      });
+
+      document.getElementById('menuButton').addEventListener('click', openMenu);
+      document.getElementById('closeMenuButton').addEventListener('click', closeMenu);
+      document.getElementById('paletteButton').addEventListener('click', openPalette);
+      overlay.addEventListener('click', () => {
+        closeMenu();
+        closePalette();
+      });
+
+      fullscreenButton.addEventListener('click', toggleFullscreen);
+      exitFullscreenButton.addEventListener('click', async () => {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        document.body.classList.remove('fullscreen-mode');
+        updateFullscreenUi();
+      });
+
+      document.addEventListener('fullscreenchange', updateFullscreenUi);
+
+      document.getElementById('saveBrowserButton').addEventListener('click', () => { saveManual(); closeMenu(); });
+      document.getElementById('loadBrowserButton').addEventListener('click', () => { loadManual(); closeMenu(); });
+      document.getElementById('clearAutosaveButton').addEventListener('click', () => { clearAutosave(); closeMenu(); });
+      document.getElementById('exportDocButton').addEventListener('click', () => { exportDoc(); closeMenu(); });
+      document.getElementById('exportTxtButton').addEventListener('click', () => { exportTxt(); closeMenu(); });
+      document.getElementById('printButton').addEventListener('click', () => { preparePrint(); closeMenu(); window.print(); });
+
+      window.addEventListener('beforeprint', preparePrint);
+
+      // Initial load
+      if (!loadAutosave()) {
+        editor.value = '';
+      }
+      updateFullscreenUi();
+      captureSelection();
+      focusEditor();
+    })();
+  </script>
+</body>
+</html>
